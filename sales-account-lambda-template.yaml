@@ -1,0 +1,124 @@
+Parameters:
+  DataProcessingAccountId:
+    Type: String
+    Description: Account ID of the Data Processing Department
+
+  DataProcessingAccountRegion:
+    Type: String
+    Default: eu-west-1
+    Description: Region of the Data Processing Department where the SQS queue is located
+    
+  DataProcessingAccountKmsKeyId:
+    Type: String
+    Description: KMS Key ID to be used by Lambda for encrypting & decrypting data
+
+Resources:
+  # IAM Role for Lambda to send messages to SalesToProcessingRequestQueue
+  LambdaSendRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: LambdaSendPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sqs:SendMessage"
+                Resource: !Sub "arn:aws:sqs:${DataProcessingAccountRegion}:${DataProcessingAccountId}:salesToProcessingRequestQueue"
+              - Effect: Allow
+                Action:
+                  - "kms:GenerateDataKey"
+                Resource: !Sub "arn:aws:kms:${DataProcessingAccountRegion}:${DataProcessingAccountId}:key/${DataProcessingAccountKmsKeyId}"
+
+  # Python Lambda Function to Send Message to SalesToProcessingRequestQueue
+  SendMessageLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaSendRole.Arn
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+
+          def lambda_handler(event, context):
+              sqs = boto3.client('sqs', region_name=os.environ['DATA_PROCESSING_ACCOUNT_REGION'])
+              queue_url = f"https://sqs.{os.environ['DATA_PROCESSING_ACCOUNT_REGION']}.amazonaws.com/{os.environ['DATA_PROCESSING_ACCOUNT_ID']}/salesToProcessingRequestQueue"
+              response = sqs.send_message(
+                  QueueUrl=queue_url,
+                  MessageBody="Sample message"
+              )
+              print(f"Message sent with ID: {response['MessageId']}")
+
+      Environment:
+        Variables:
+          DATA_PROCESSING_ACCOUNT_ID: !Ref DataProcessingAccountId
+          DATA_PROCESSING_ACCOUNT_REGION: !Ref DataProcessingAccountRegion           
+                
+  # IAM Role for Lambda with permissions to access logs and SQS
+  LambdaRoleForSQSAccess:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: LambdaSQSPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "arn:aws:logs:*:*:*"
+              - Effect: Allow
+                Action:
+                  - "sqs:ReceiveMessage"
+                  - "sqs:DeleteMessage"
+                  - "sqs:GetQueueAttributes"
+                Resource: !Sub "arn:aws:sqs:${DataProcessingAccountRegion}:${DataProcessingAccountId}:processingToSalesResponseQueue"
+              - Effect: Allow
+                Action:
+                  - "kms:Decrypt"
+                Resource: !Sub "arn:aws:kms:${DataProcessingAccountRegion}:${DataProcessingAccountId}:key/${DataProcessingAccountKmsKeyId}"
+
+  # Lambda Function to Process Messages from ProcessingToSalesResponseQueue
+  ProcessMessageLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: "ProcessMessageLambda"
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaRoleForSQSAccess.Arn
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import json
+
+          def lambda_handler(event, context):
+              for record in event['Records']:
+                  message_body = record['body']
+                  print("Received message:", message_body)
+                  # Process message logic here
+
+  # SQS Trigger for Lambda
+  LambdaSQSTrigger:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 10
+      EventSourceArn: !Sub "arn:aws:sqs:${DataProcessingAccountRegion}:${DataProcessingAccountId}:processingToSalesResponseQueue"
+      FunctionName: !Ref ProcessMessageLambda

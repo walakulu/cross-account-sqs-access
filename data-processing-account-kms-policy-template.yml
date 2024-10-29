@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create a new customer-managed KMS key with cross-account access
+
+Parameters:
+  SalesAccountId:
+    Type: String
+    Description: The account ID of the SalesAccountId
+
+Resources:
+  MyKMSKey:
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: 'Example KMS key for encrypting/decripting data'
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          # Full access for the data processing account
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+          # Cross-account access for the sales account
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${SalesAccountId}:root"
+            Action:
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+            Resource: '*'
+      KeyUsage: ENCRYPT_DECRYPT
+      Origin: AWS_KMS
+
+Outputs:
+  KMSKeyId:
+    Description: 'The ID of the created KMS key'
+    Value: !Ref MyKMSKey
+    Export:
+      Name: KMSKeyId

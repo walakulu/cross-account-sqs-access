@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: SQS Queues for Sales and Processing with Cross-Account Access and KMS Key
+
+Parameters:
+  SalesAccountId:
+    Type: String
+    Description: The AWS account ID of the Sales Department
+
+Resources:
+  # SQS Queue for requests from Sales to Processing
+  SalesToProcessingRequestQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: salesToProcessingRequestQueue
+      KmsMasterKeyId: !ImportValue KMSKeyId  # Import the KMS Key ID from another stack
+
+  # SQS Queue for responses from Processing to Sales
+  ProcessingToSalesResponseQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: processingToSalesResponseQueue
+      KmsMasterKeyId: !ImportValue KMSKeyId  # Import the KMS Key ID from another stack
+
+  # Policy to allow cross-account access for the Sales to Processing request queue
+  SalesToProcessingRequestQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref SalesToProcessingRequestQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - "sqs:SendMessage"
+            Principal:
+              AWS: !Sub "arn:aws:iam::${SalesAccountId}:root"
+            Resource: !GetAtt SalesToProcessingRequestQueue.Arn
+
+  # Policy to allow cross-account access for the Processing to Sales response queue
+  ProcessingToSalesResponseQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ProcessingToSalesResponseQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${SalesAccountId}:root"
+            Action:
+              - "sqs:ReceiveMessage"
+              - "sqs:DeleteMessage"
+              - "sqs:GetQueueAttributes"
+            Resource: !GetAtt ProcessingToSalesResponseQueue.Arn
